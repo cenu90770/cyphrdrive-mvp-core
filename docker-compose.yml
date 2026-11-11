@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg16
+    container_name: cyphrdrive-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cyphrdrive_dev
+      POSTGRES_USER: cyphr_admin
+      POSTGRES_PASSWORD: cyphr_secret_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/home/postgres/pgdata/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cyphr_admin -d cyphrdrive_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: cyphrdrive-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_secret_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret_password", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  emqx:
+    image: emqx/emqx:5.6.1
+    container_name: cyphrdrive-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # Standard MQTT Port
+      - "8083:8083"   # MQTT over WebSockets
+      - "18083:18083" # EMQX Dashboard (admin:public)
+    volumes:
+      - emqxdata:/opt/emqx/data
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
+  emqxdata:
