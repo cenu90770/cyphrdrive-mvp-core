@@ -36,7 +36,7 @@ export class BookingService {
      * @returns 
      * @throws VehicleNotFoundError, KycVerificationFailedError, DoubleBookingConflictError, BookingDomainError
      */
-    public static async initiateBooking(rawInput: InitiateBookingInput): Promise<BookingRecord> {
+    public static async initiateBookingHold(rawInput: InitiateBookingInput): Promise<BookingRecord> {
         const input = InitiateBookingSchema.parse(rawInput);
         const startDate = new Date(input.startTime);
         const endDate = new Date(input.endTime);
