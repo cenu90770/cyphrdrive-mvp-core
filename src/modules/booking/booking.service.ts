@@ -257,8 +257,7 @@ export class BookingService {
     /**
      * Cancel or release an active hold booking (FR-3.6)
      * @param bookingReference 
-     * @returns 
-     * @throws BookingDomainError
+     * @returns
      */
     public static async cancelBooking(bookingReference: string, reason: string): Promise<void> {
         const res = await pool.query<BookingRecord>(
@@ -275,12 +274,5 @@ export class BookingService {
         }
 
     }
-
-
-
-
-
-
-
 
 }
