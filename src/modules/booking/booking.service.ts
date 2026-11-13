@@ -84,7 +84,7 @@ export class BookingService {
                 status IN ('CONFIRMED', 'ACTIVE')
                 OR (status = 'HOLD_PENDING' AND hold_expires_at > NOW())
                 )
-                AND (start_time, end_time) OVERLAPS ($2::timestampz, $3::timestampz)
+                AND (start_time, end_time) OVERLAPS ($2::timestamptz, $3::timestamptz)
                 LIMIT 1
             `;
 
@@ -225,6 +225,7 @@ export class BookingService {
                 `INSERT INTO payment_transactions (
                     booking_id,
                     gateway_transaction_id,
+                    type,
                     amount,
                     currency,
                     status,
