@@ -18,7 +18,7 @@ export class VehicleController {
         endTime,
         category,
         transmission,
-      } = req.body;
+      } = req.query;
 
       if (!startTime || !endTime) {
         res.status(400).json({
