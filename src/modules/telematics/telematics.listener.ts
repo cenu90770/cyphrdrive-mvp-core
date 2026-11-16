@@ -1,8 +1,8 @@
 import { mqttClient } from "../../config/mqtt";
-import { TelemetryService } from "./telematics.service";
+import { TelematicsService } from "./telematics.service";
 
 export class TelematicsListener {
-  private static readonly TELEMETRY_TOPIC = "vehicle/+/telemetry";
+  private static readonly TELEMETRY_TOPIC = "vehicles/+/telemetry";
 
   public static initialize(): void {
     mqttClient.subscribe(this.TELEMETRY_TOPIC, { qos: 1 }, (err) => {
@@ -19,7 +19,7 @@ export class TelematicsListener {
       try {
         if (topic.endsWith("/telemetry")) {
           const payload = JSON.parse(message.toString());
-          await TelemetryService.ingestTelemetry(payload);
+          await TelematicsService.ingestTelemetry(payload);
         }
       } catch (err: any) {
         console.error(

@@ -8,7 +8,7 @@ import {
   CRITICAL_DTC_MAP,
 } from "./telematics.types";
 
-export class TelemetryService {
+export class TelematicsService {
   private static readonly HOT_STATE_PREFIX = "vehicle:live:";
 
   /**
