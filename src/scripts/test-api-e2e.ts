@@ -15,16 +15,16 @@ async function runApiIntegrationTest() {
   );
 
   const server = http.createServer(app);
-  await new Promise<void>((resolve) => server.listen(3001, resolve));
-  const baseUrl = "http://localhost:3001";
+  await new Promise<void>((resolve) => server.listen(3002, resolve));
+  const baseUrl = "http://localhost:3002";
 
   try {
     // 1. Healthcheck
     const health = await fetch(`${baseUrl}/health`).then((r) => r.json());
     console.log(`✅ Healthcheck: ${health.status} (${health.service})`);
 
-    // 2. Login as Seeded Verified Customer Elena (FR-1.2)
-    console.log("\nStep 1: Logging in as customer...");
+    // 2. Customer Login (FR-1.2)
+    console.log("\nStep 1: Logging in as verified customer...");
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -39,24 +39,41 @@ async function runApiIntegrationTest() {
       throw new Error(`Login failed: ${JSON.stringify(loginData)}`);
     const customerToken = loginData.accessToken;
     console.log(
-      `✅ Logged in successfully. JWT Token: ${customerToken.substring(0, 30)}...`,
+      `✅ Customer Logged in! JWT Token: ${customerToken.substring(0, 30)}...`,
     );
 
     // 3. Search Available Vehicles near Berlin Center (FR-2)
     console.log(
-      "\nStep 2: Performing geospatial vehicle search via PostGIS (FR-2)...",
+      "\nStep 2: Searching available vehicles near Berlin Alexanderplatz...",
     );
-    const tomorrow = new Date(Date.now() + 86400000 * 30).toISOString();
-    const returnDay = new Date(Date.now() + 86400000 * 33).toISOString();
 
-    const searchRes = await fetch(
-      `${baseUrl}/api/v1/vehicles/search?latitude=52.5200&longitude=13.4050&radiusKm=30&startTime=${tomorrow}&endTime=${returnDay}`,
-    );
+    // Use dynamic dates 40 days in the future to avoid colliding with any previous tests
+    const futureOffset = 40;
+    const startTime = new Date(
+      Date.now() + 86400000 * futureOffset,
+    ).toISOString();
+    const endTime = new Date(
+      Date.now() + 86400000 * (futureOffset + 3),
+    ).toISOString();
+
+    const searchUrl = `${baseUrl}/api/v1/vehicles/search?latitude=52.5200&longitude=13.4050&radiusKm=50&startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
+    const searchRes = await fetch(searchUrl);
     const searchData = await searchRes.json();
-    console.log(`✅ Found ${searchData.count} available vehicles within 30km:`);
+
+    if (!searchRes.ok) {
+      throw new Error(
+        `Search API failed with status ${searchRes.status}: ${JSON.stringify(searchData)}`,
+      );
+    }
+
+    if (!searchData.vehicles || searchData.vehicles.length === 0) {
+      throw new Error("No available vehicles found matching the query.");
+    }
+
+    console.log(`✅ Found ${searchData.count} available vehicles:`);
     searchData.vehicles.forEach((v: any) => {
       console.log(
-        `   - ${v.make} ${v.model} (${v.category}) @ €${v.base_daily_rate}/day [${parseFloat(v.distance_km).toFixed(1)} km away]`,
+        `   - ${v.make} ${v.model} (${v.category}) @ €${v.base_daily_rate}/day [${v.distance_km} km away]`,
       );
     });
 
@@ -64,7 +81,7 @@ async function runApiIntegrationTest() {
 
     // 4. Create Booking Hold via REST API (FR-3.1)
     console.log(
-      `\nStep 3: Creating booking hold for ${chosenCar.make} ${chosenCar.model}...`,
+      `\nStep 3: Creating reservation hold for ${chosenCar.make} ${chosenCar.model}...`,
     );
     const holdRes = await fetch(`${baseUrl}/api/v1/bookings/hold`, {
       method: "POST",
@@ -76,8 +93,8 @@ async function runApiIntegrationTest() {
         vehicleId: chosenCar.id,
         pickupBranchId: chosenCar.branch_id,
         dropoffBranchId: chosenCar.branch_id,
-        startTime: tomorrow,
-        endTime: returnDay,
+        startTime,
+        endTime,
         addOns: ["GPS_NAVIGATION", "INSURANCE_PREMIUM"],
       }),
     });
@@ -86,7 +103,7 @@ async function runApiIntegrationTest() {
     if (!holdRes.ok)
       throw new Error(`Hold failed: ${JSON.stringify(holdData)}`);
     console.log(
-      `✅ Reservation hold created: Ref ${holdData.booking_reference} | Total: €${holdData.total_price}`,
+      `✅ Hold created: Ref ${holdData.booking_reference} | Total: €${holdData.total_price}`,
     );
 
     // 5. Confirm Booking via REST API (FR-3.4)
@@ -101,15 +118,17 @@ async function runApiIntegrationTest() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${customerToken}`,
         },
-        body: JSON.stringify({ paymentIntentId: "pi_rest_confirmed_123" }),
+        body: JSON.stringify({ paymentIntentId: "pi_test_confirmed_3002" }),
       },
     );
 
     const confirmData = await confirmRes.json();
+    if (!confirmRes.ok)
+      throw new Error(`Confirm failed: ${JSON.stringify(confirmData)}`);
     console.log(`✅ Reservation Confirmed! Status: ${confirmData.status}`);
 
     // 6. Test Fleet Admin Live Map Access (FR-11.1, FR-12.1)
-    console.log("\nStep 5: Testing Fleet Admin RBAC Live Map Route...");
+    console.log("\nStep 5: Testing Fleet Admin RBAC Live Map Access...");
     const adminLoginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -126,7 +145,7 @@ async function runApiIntegrationTest() {
     });
     const mapData = await mapRes.json();
     console.log(
-      `✅ Fleet Admin Map query authorized: ${mapData.fleet.length} active vehicle markers loaded.`,
+      `✅ Fleet Admin Map authorized: ${mapData.fleet.length} active vehicle markers loaded.`,
     );
 
     console.log("\n🎉 ALL REST API ENDPOINTS VERIFIED END-TO-END.\n");
