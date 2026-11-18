@@ -86,11 +86,11 @@ jobs:
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
 
-      - name: Upload Security Scan Results
+      - name: Upload Trivy Security Scan Results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: "trivy-results.sarif"
+          sarif_file: trivy-results.sarif
 
       - name: Push Container to Registry
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
