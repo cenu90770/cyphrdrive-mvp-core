@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cyphrdrive-mvp-config
+  namespace: cyphrdrive-mvp-prod
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  DB_HOST: "postgres-cluster.cyphrdrive-mvp-prod.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "cyphrdrive_mvp_prod"
+  DB_USER: "cyphr_admin"
+  REDIS_HOST: "redis-cluster.cyphrdrive-mvp-prod.svc.cluster.local"
+  REDIS_PORT: "6379"
+  MQTT_BROKER_URL: "mqtt://emqx-cluster.cyphrdrive-mvp-prod.svc.cluster.local:1883"
+  AWS_REGION: "eu-central-1"
+  AWS_S3_BUCKET: "cyphrdrive-mvp-production-media"
