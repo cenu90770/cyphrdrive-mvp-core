@@ -18,7 +18,7 @@ export class TelematicsService {
     const data = TelemetryPayloadSchema.parse(rawPayload);
     const recordedAt = new Date(data.timestamp);
 
-    // FAST PATH: Update Redis Hot State for Fleet Admin Live Map
+    // 1. FAST PATH: Update Redis Hot State for Fleet Admin Live Map
     const hotStateKey = `${this.HOT_STATE_PREFIX}${data.vehicleId}`;
     const liveState: VehicleLiveState = {
       vehicleId: data.vehicleId,
@@ -97,14 +97,70 @@ export class TelematicsService {
     );
   }
 
+  /**
+   * LIVE MAP QUERY: Fetches from Redis. If Redis is cold, selft-heals from PostgreSQL.
+   * @returns
+   */
   public static async getFleetLivePositions(): Promise<VehicleLiveState[]> {
     const keys = await redis.keys(`${this.HOT_STATE_PREFIX}*`);
-    if (keys.length === 0) return [];
 
-    const states = await redis.mget(keys);
-    return states
-      .filter((s): s is string => s !== null)
-      .map((s) => JSON.parse(s) as VehicleLiveState);
+    // HOT-CACHE PATH: Return from Redis
+    if (keys.length > 0) {
+      const states = await redis.mget(keys);
+      return states
+        .filter((s): s is string => s !== null)
+        .map((s) => JSON.parse(s) as VehicleLiveState);
+    }
+
+    // COLD-CACHE FALLBACK: Read latest telemetry or branch locations from PostgreSQL
+    console.log(
+      "[TelemetryService] Redis cache cold. Self-healing from PostgreSQL...",
+    );
+    const dbFallback = await pool.query(`
+      SELECT DISTINCT ON (v.id)
+        v.id as vehicle_id,
+        COALESCE(ST_Y(t.location::geometry), ST_Y(b.location::geometry)) as latitude,
+        COALESCE(ST_X(t.location::geometry), ST_X(b.location::geometry)) as longitude,
+        COEALESCE(t.speed_kmh, 0.0) as speed_kmh,
+        COEALESCE(t.battery_level, 95) as battery_level,
+        COEALESCE(t.fuel_level, 100) as fuel_level,
+        COEALESCE(t.doors_locked, true) as doors_locked,
+        COEALESCE(t.engine_running, false) as engine_running,
+        COEALESCE(t.odometer, 12000) as odometer,
+        COEALESCE(t.diagnostic_trouble_codes, {}) as diagnostic_trouble_codes,
+        COEALESCE(t.recorded_at, NOW()) as recorded_at,
+      FROM vehicles v
+      JOIN branches b ON v.branch_id = b.id
+      LEFT JOIN telemetry_logs t ON v.id = t.vehicle_id
+      WHERE v.status = 'AVAILABLE'
+      ORDER BY v.id, t.recorded_at DES
+    `);
+
+    const fallbackStates: VehicleLiveState[] = dbFallback.rows.map((r) => ({
+      vehicleId: r.vehicle_id,
+      latitude: r.latitude,
+      longitude: r.longitude,
+      speedKmh: r.speed_kmh,
+      batteryLevel: r.battery_level,
+      fuelLevel: r.fuel_level,
+      doorsLocked: r.doors_locked,
+      engineRunning: r.engine_running,
+      odometer: r.odometer,
+      dtcAlerts: r.diagnostic_trouble_codes,
+      lastUpdated: new Date(r.last_updated).toISOString(),
+    }));
+
+    // Seed Redis so subsequent requests are instant
+    for (const state of fallbackStates) {
+      await redis.set(
+        `${this.HOT_STATE_PREFIX}${state.vehicleId}`,
+        JSON.stringify(state),
+        "EX",
+        86400,
+      );
+    }
+
+    return fallbackStates;
   }
 
   /**
@@ -122,12 +178,26 @@ export class TelematicsService {
     });
 
     return new Promise((resolve, reject) => {
-      mqttClient.publish(topic, payload, { qos: 1 }, (err) => {
+      mqttClient.publish(topic, payload, { qos: 1 }, async (err) => {
         if (err) {
-          console.error(`[MQTT] Failed to publish command to ${topic}:`, err);
+          console.error(
+            `[TelemetryService] MQTT Failed to publish command to ${topic}:`,
+            err,
+          );
           return reject(err);
         }
-        console.log(`📡 [MQTT Command Sent] ${command} -> Topic: ${topic}`);
+        // Optimistically update hot cache
+        const hotKey = `${this.HOT_STATE_PREFIX}${vehicleId}`;
+        const raw = await redis.get(hotKey);
+        if (raw) {
+          const current = JSON.parse(raw) as VehicleLiveState;
+          current.doorsLocked = command === "LOCK_DOORS";
+          redis.set(hotKey, JSON.stringify(current), "EX", 86400);
+        }
+
+        console.log(
+          `📡 [MQTT command dispatched] ${command} -> Topic: ${topic}`,
+        );
         resolve(true);
       });
     });
