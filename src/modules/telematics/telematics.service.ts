@@ -121,19 +121,19 @@ export class TelematicsService {
         v.id as vehicle_id,
         COALESCE(ST_Y(t.location::geometry), ST_Y(b.location::geometry)) as latitude,
         COALESCE(ST_X(t.location::geometry), ST_X(b.location::geometry)) as longitude,
-        COEALESCE(t.speed_kmh, 0.0) as speed_kmh,
-        COEALESCE(t.battery_level, 95) as battery_level,
-        COEALESCE(t.fuel_level, 100) as fuel_level,
-        COEALESCE(t.doors_locked, true) as doors_locked,
-        COEALESCE(t.engine_running, false) as engine_running,
-        COEALESCE(t.odometer, 12000) as odometer,
-        COEALESCE(t.diagnostic_trouble_codes, {}) as diagnostic_trouble_codes,
-        COEALESCE(t.recorded_at, NOW()) as recorded_at,
+        COALESCE(t.speed_kmh, 0.0) as speed_kmh,
+        COALESCE(t.battery_level, 95) as battery_level,
+        COALESCE(t.fuel_level, 100) as fuel_level,
+        COALESCE(t.doors_locked, true) as doors_locked,
+        COALESCE(t.engine_running, false) as engine_running,
+        COALESCE(t.odometer, 12000) as odometer,
+        COALESCE(t.diagnostic_trouble_codes, '{}') as diagnostic_trouble_codes,
+        COALESCE(t.recorded_at, NOW()) as last_updated
       FROM vehicles v
       JOIN branches b ON v.branch_id = b.id
       LEFT JOIN telemetry_logs t ON v.id = t.vehicle_id
       WHERE v.status = 'AVAILABLE'
-      ORDER BY v.id, t.recorded_at DES
+      ORDER BY v.id, t.recorded_at DESC;
     `);
 
     const fallbackStates: VehicleLiveState[] = dbFallback.rows.map((r) => ({
