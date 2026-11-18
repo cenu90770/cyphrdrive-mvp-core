@@ -11,6 +11,14 @@ export class AdminController {
     res: Response,
   ): Promise<void> {
     try {
+      // Disable HTTP caching for live polling so that polling requests always receive a full 200 OK response.
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, proxy-revalidate",
+      );
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", 0);
+
       const livePositions = await TelematicsService.getFleetLivePositions();
 
       // Scoping: If FleetAdmin, only return vehicles belonging to their assigned branches
@@ -39,7 +47,7 @@ export class AdminController {
   }
 
   /**
-   * Remote vehicle unlock / lock command (FR-8.1)
+   * Remote vehicle Unlock/Lock command (FR-8.1)
    */
   public static async dispatchCommand(
     req: Request,
@@ -55,6 +63,7 @@ export class AdminController {
       }
 
       await TelematicsService.sendVehicleCommand(vehicleId as string, command);
+      res.status(200).json({ dispateched: true, vehicleId, command });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
