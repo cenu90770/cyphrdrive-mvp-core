@@ -63,7 +63,7 @@ export class AdminController {
       }
 
       await TelematicsService.sendVehicleCommand(vehicleId as string, command);
-      res.status(200).json({ dispateched: true, vehicleId, command });
+      res.status(200).json({ dispatched: true, vehicleId, command });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
