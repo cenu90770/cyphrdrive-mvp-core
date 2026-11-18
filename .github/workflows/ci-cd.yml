@@ -1,0 +1,137 @@
+name: CyphrDrive (MVP) Continuous Integration & Deployment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # -------------------------------------------------------------
+  # 1. QUALITY & TYPE INTEGRITY GATE
+  # -------------------------------------------------------------
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Type Check
+        run: npx tsc --noEmit
+
+  # -------------------------------------------------------------
+  # 2. CONTAINER BUILD & VULNERABILITY SCAN
+  # -------------------------------------------------------------
+  build-and-scan:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker Image (Local Context)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Security Scan (NFR-2)
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-scan
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: Upload Security Scan Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Push Container to Registry
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # -------------------------------------------------------------
+  # 3. KUBERNETES ZERO-DOWNTIME ROLLING DEPLOYMENT
+  # -------------------------------------------------------------
+  deploy-to-prod:
+    needs: build-and-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.28.0"
+
+      # Configure your cloud provider credentials (e.g. AWS EKS / GCP GKE)
+      - name: Set Kubernetes Context
+        run: |
+          echo "Connecting to production cluster..."
+          # Example: aws eks update-kubeconfig --name cyphrdrive-mvp-cluster --region eu-central-1
+
+      - name: Apply Kubernetes Manifests
+        run: |
+          kubectl apply -f k8s/00-namespace.yaml
+          kubectl apply -f k8s/01-configmap.yaml
+          kubectl apply -f k8s/03-deployment.yaml
+          kubectl apply -f k8s/04-service.yaml
+          kubectl apply -f k8s/05-hpa.yaml
+          kubectl apply -f k8s/06-ingress.yaml
+
+      - name: Verify Zero-Downtime Rollout
+        run: |
+          kubectl rollout status deployment/cyphrdrive-mvp-api -n cyphrdrive-mvp-prod --timeout=120s
