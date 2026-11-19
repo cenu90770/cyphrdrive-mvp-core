@@ -1,4 +1,4 @@
-name: CyphrDrive Continuous Integration & Deployment
+name: CyphrDrive (MVP) Continuous Integration
 
 on:
   push:
@@ -12,7 +12,7 @@ env:
 
 jobs:
   # -------------------------------------------------------------
-  # 1. QUALITY & TYPE INTEGRITY GATE
+  # 1. CODE INTEGRITY & TYPE CHECK
   # -------------------------------------------------------------
   lint-and-test:
     runs-on: ubuntu-latest
@@ -33,10 +33,35 @@ jobs:
         run: npx tsc --noEmit
 
   # -------------------------------------------------------------
-  # 2. CONTAINER BUILD & REGISTRY PUSH
+  # 2. KUBERNETES MANIFEST VALIDATION (CLIENT-SIDE)
   # -------------------------------------------------------------
-  build-and-scan:
-    needs: lint-and-test
+  validate-k8s:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.28.0"
+
+      - name: Validate Kubernetes Manifests Syntax
+        run: |
+          echo "Validating Kubernetes manifests..."
+          kubectl apply --dry-run=client -f k8s/00-namespace.yaml
+          kubectl apply --dry-run=client -f k8s/01-configmap.yaml
+          kubectl apply --dry-run=client -f k8s/03-deployment.yaml
+          kubectl apply --dry-run=client -f k8s/04-service.yaml
+          kubectl apply --dry-run=client -f k8s/05-hpa.yaml
+          kubectl apply --dry-run=client -f k8s/06-ingress.yaml
+          echo "✅ All Kubernetes manifests are syntactically valid."
+
+  # -------------------------------------------------------------
+  # 3. CONTAINER BUILD & REGISTRY PUSH
+  # -------------------------------------------------------------
+  build-and-push:
+    needs: [lint-and-test, validate-k8s]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,13 +74,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Uses the built-in github.token (no manual secrets needed)
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ github.token }}
 
       - name: Extract Docker Metadata
         id: meta
@@ -75,57 +101,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  # -------------------------------------------------------------
-  # 3. KUBERNETES MANIFEST VALIDATION & DEPLOYMENT
-  # -------------------------------------------------------------
-  deploy-to-prod:
-    needs: build-and-scan
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: "v1.28.0"
-
-      # Always validate Kubernetes manifests syntax (Dry-Run)
-      - name: Validate Kubernetes Manifests
-        run: |
-          echo "Validating Kubernetes manifests syntax..."
-          kubectl apply --dry-run=client -f k8s/00-namespace.yaml
-          kubectl apply --dry-run=client -f k8s/01-configmap.yaml
-          kubectl apply --dry-run=client -f k8s/03-deployment.yaml
-          kubectl apply --dry-run=client -f k8s/04-service.yaml
-          kubectl apply --dry-run=client -f k8s/05-hpa.yaml
-          kubectl apply --dry-run=client -f k8s/06-ingress.yaml
-          echo "✅ All Kubernetes manifests are valid."
-
-      # Conditionally deploy using a shell check
-      - name: Deploy to Remote Kubernetes Cluster
-        env:
-          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DATA }}
-        run: |
-          if [ -z "$KUBECONFIG_DATA" ]; then
-            echo "ℹ️ No KUBECONFIG_DATA secret found in repository settings."
-            echo "✅ Skipping remote cluster deployment. Manifest validation passed."
-            exit 0
-          fi
-
-          echo "Found cluster credentials. Initializing deployment..."
-          mkdir -p ~/.kube
-          echo "$KUBECONFIG_DATA" | base64 --decode > ~/.kube/config
-          chmod 600 ~/.kube/config
-
-          kubectl apply -f k8s/00-namespace.yaml
-          kubectl apply -f k8s/01-configmap.yaml
-          kubectl apply -f k8s/03-deployment.yaml
-          kubectl apply -f k8s/04-service.yaml
-          kubectl apply -f k8s/05-hpa.yaml
-          kubectl apply -f k8s/06-ingress.yaml
-
-          kubectl rollout status deployment/cyphrdrive-api -n cyphrdrive-prod --timeout=120s
